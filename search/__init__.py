@@ -103,7 +103,7 @@ PUNCTUATION_REGEX = re.compile('[' + re.escape(string.punctuation) + ']')
 # Rather than have an extra property name to distinguish stemmed from
 # non-stemmed index entities, we use different Models that are
 # identical to a base index entity.
-class SearchIndex(db.Model):
+class SearchIndex(db.Expando):
     """Holds full text indexing on an entity.
     
     This model is used by the Searchable mix-in to hold full text
@@ -142,6 +142,10 @@ class SearchIndex(db.Model):
         args = {'key_name': cls.get_index_key_name(parent, index_num),
                 'parent': parent_key, 'parent_kind': parent_key.kind(), 
                 'phrases': phrases }
+        for key in parent.INDEX_ADDITIONAL:
+            value = getattr(parent, key, None)
+            if value is not None:
+                args[key] = value
         return cls(**args).put()
 
 
@@ -257,12 +261,16 @@ class Searchable(object):
     def full_text_search(phrase, limit=10, 
                          kind=None, 
                          stemming=INDEX_STEMMING,
-                         multi_word_literal=INDEX_MULTI_WORD):
+                         multi_word_literal=INDEX_MULTI_WORD,
+                         additional_filters=None,
+                         order=None):
         """Queries search indices for phrases using a merge-join.
         
         Args:
             phrase: String.  Search phrase.
             kind: String.  Returned keys/entities are restricted to this kind.
+            additional_filters. list of tuples to add to the query filter, fields
+                                should be specified in INDEX_ADDITIONAL
 
         Returns:
             A list of (key, title) tuples corresponding to the indexed entities.  
@@ -296,6 +304,9 @@ class Searchable(object):
                 query = query.filter('phrases =', phrase)
             if kind:
                 query = query.filter('parent_kind =', kind)
+            for filter_field, filter_value in additional_filters:
+                query = query.filter(key, val)
+            query.order(order)
             index_keys = query.fetch(limit=limit)
 
         if len(index_keys) < limit:
@@ -398,7 +409,7 @@ class Searchable(object):
         return phrases
 
     @classmethod
-    def search(cls, phrase, limit=10, keys_only=False):
+    def search(cls, phrase, limit=10, keys_only=False, additional_filters=None, order=None):
         """Queries search indices for phrases using a merge-join.
         
         Use of this class method lets you easily restrict searches to a kind
@@ -408,6 +419,9 @@ class Searchable(object):
             phrase: Search phrase (string)
             limit: Number of entities or keys to return.
             keys_only: If True, return only keys with title of parent entity.
+            additional_filters. list of tuples to add to the query filter, fields
+                                should be specified in INDEX_ADDITIONAL
+            order: field to order by, should in INDEX_ADDITIONAL
         
         Returns:
             A list.  If keys_only is True, the list holds (key, title) tuples.
@@ -416,7 +430,9 @@ class Searchable(object):
         key_list = Searchable.full_text_search(
                         phrase, limit=limit, kind=cls.kind(),
                         stemming=cls.INDEX_STEMMING, 
-                        multi_word_literal=cls.INDEX_MULTI_WORD)
+                        multi_word_literal=cls.INDEX_MULTI_WORD,
+                        additional_filters=additional_filters,
+                        order=order)
         if keys_only:
             logging.debug("key_list: %s", key_list)
             return key_list
